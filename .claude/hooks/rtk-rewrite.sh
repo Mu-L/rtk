@@ -45,9 +45,13 @@ case "$CMD" in
 esac
 
 # Rewrite via rtk — single source of truth for all command mappings and permission checks.
+# Scrub RTK_REWRITE_HOST: that channel relaxes RTK's approval gate, and this
+# hook turns exit 0 into an explicit allow, so an inherited value (a shell rc,
+# .envrc, or CI env) must not reach it. Only the delegate that sets it may
+# rely on it.
 # Use "|| EXIT_CODE=$?" to capture non-zero exit codes without triggering set -e.
 EXIT_CODE=0
-REWRITTEN=$(rtk rewrite "$CMD" 2>/dev/null) || EXIT_CODE=$?
+REWRITTEN=$(env -u RTK_REWRITE_HOST rtk rewrite "$CMD" 2>/dev/null) || EXIT_CODE=$?
 
 case $EXIT_CODE in
   0)
