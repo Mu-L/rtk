@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rtk-hook-version: 3
+# rtk-hook-version: 4
 # RTK Claude Code hook — rewrites commands to use rtk for token savings.
 # Requires: rtk >= 0.23.0, jq
 #
@@ -8,10 +8,10 @@
 # To add or change rewrite rules, edit the Rust registry — not this file.
 #
 # Exit code protocol for `rtk rewrite`:
-#   0 + stdout  Rewrite found, no deny/ask rule matched → auto-allow
+#   0 + stdout  Rewrite found, an allow rule matched → auto-allow
 #   1           No RTK equivalent → pass through unchanged
 #   2           Deny rule matched → pass through (Claude Code native deny handles it)
-#   3 + stdout  Ask rule matched → rewrite but let Claude Code prompt the user
+#   3 + stdout  Ask rule matched, or no rule matched → rewrite but let Claude Code prompt the user
 
 if ! command -v jq &>/dev/null; then
   echo "[rtk] WARNING: jq is not installed. Hook cannot rewrite commands. Install jq: https://jqlang.github.io/jq/download/" >&2
@@ -61,7 +61,7 @@ EXIT_CODE=$?
 
 case $EXIT_CODE in
   0)
-    # Rewrite found, no permission rules matched — safe to auto-allow.
+    # Rewrite found and an allow rule matched — safe to auto-allow.
     # If the output is identical, the command was already using RTK.
     [ "$CMD" = "$REWRITTEN" ] && exit 0
     ;;
@@ -74,8 +74,8 @@ case $EXIT_CODE in
     exit 0
     ;;
   3)
-    # Ask rule matched — rewrite the command but do NOT auto-allow so that
-    # Claude Code prompts the user for confirmation.
+    # An ask rule matched, or no rule did — rewrite the command but do NOT
+    # auto-allow, so Claude Code prompts the user for confirmation.
     ;;
   *)
     exit 0

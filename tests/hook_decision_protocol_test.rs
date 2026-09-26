@@ -79,8 +79,7 @@ impl Sandbox {
         // Keep the host channel out of the inherited environment. Exporting it
         // in a developer's shell would otherwise turn the suite red on that
         // machine, or hide a real regression, rather than testing the code; a
-        // test that wants it opts in through `env` below (#3909 review,
-        // round 2).
+        // test that wants it opts in through `env` below.
         command.env_remove("RTK_REWRITE_HOST");
         for (key, value) in env {
             command.env(key, value);
@@ -143,6 +142,62 @@ impl Sandbox {
     fn rewrite_as(&self, host: &str, cmd: &str) -> (i32, String) {
         let (code, stdout, _) = self.run_with_env(&["rewrite", cmd], &[("RTK_REWRITE_HOST", host)]);
         (code, stdout)
+    }
+
+    /// Run a shipped shell hook the way an agent does: the hook input on stdin
+    /// and the built `rtk` first on PATH. The environment is cleared first, so
+    /// nothing inherited -- a `BASH_ENV`, another `rtk`, an audit or data
+    /// directory -- can change what runs or where it writes; config, data and
+    /// cache all live in this sandbox.
+    #[cfg(unix)]
+    fn run_hook(&self, hook: &str, cmd: &str, env: &[(&str, &str)]) -> (i32, String, String) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let rtk_dir = std::path::Path::new(env!("CARGO_BIN_EXE_rtk"))
+            .parent()
+            .expect("rtk binary has a parent directory")
+            .to_path_buf();
+        // The built rtk first, then the caller's PATH for bash, jq and coreutils.
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let path =
+            std::env::join_paths(std::iter::once(rtk_dir).chain(std::env::split_paths(&inherited)))
+                .expect("PATH entries join");
+        let input = self.project.join("hook-input.json");
+        std::fs::write(
+            &input,
+            serde_json::json!({
+                "tool_name": "Bash",
+                "tool_input": { "command": cmd },
+            })
+            .to_string(),
+        )
+        .expect("write hook input");
+        let mut command = Command::new("bash");
+        command
+            .env_clear()
+            .arg(root.join(hook))
+            .current_dir(&self.project)
+            .env("PATH", path)
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("XDG_DATA_HOME", self.home.join(".local/share"))
+            .env("XDG_CACHE_HOME", self.home.join(".cache"))
+            .env("CLAUDE_CONFIG_DIR", &self.claude_home)
+            .env("RTK_DB_PATH", self.project.join("rtk.db"))
+            .env("RTK_TEE_DIR", self.tee_dir())
+            .env("RTK_RECALL_DB", self.recall_db())
+            .env("LC_ALL", "C");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let out = command
+            .stdin(std::fs::File::open(&input).expect("open hook input"))
+            .output()
+            .expect("run hook");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
     }
 }
 
@@ -567,8 +622,57 @@ mod hook_check {
 mod rewrite_host_scoping {
     use super::Sandbox;
 
-    /// The commands the reviewer's deny matrix on #3909 was built from.
+    /// Deny rules on commands RTK can rewrite, so a deny that stopped applying
+    /// shows up as an allowed rewrite instead of hiding behind a passthrough.
     const DENY_RULES: &[&str] = &["du *", "git push *"];
+
+    /// The hooks that turn exit 0 into an affirmative allow must not let an
+    /// inherited `RTK_REWRITE_HOST` reach `rtk rewrite`, or a variable meant
+    /// for OpenClaw auto-approves every rewritable command in another agent's
+    /// session. Each hook runs as the agent runs it, with the variable set. It
+    /// must still hand back the rewrite -- proof that the hook, `jq` and the
+    /// built `rtk` all ran, so a missing tool fails here rather than passing --
+    /// and must not answer with an allow.
+    #[cfg(unix)]
+    #[test]
+    fn affirmative_allow_hooks_ignore_an_inherited_host() {
+        let bare = Sandbox::bare();
+        // Each host reads its own keys, so each hook is held to its own shape: a
+        // Claude hook answering in Cursor's keys would be ignored by Claude Code.
+        for (hook, command_at, permission_at) in [
+            (
+                "hooks/claude/rtk-rewrite.sh",
+                "/hookSpecificOutput/updatedInput/command",
+                "/hookSpecificOutput/permissionDecision",
+            ),
+            (
+                ".claude/hooks/rtk-rewrite.sh",
+                "/hookSpecificOutput/updatedInput/command",
+                "/hookSpecificOutput/permissionDecision",
+            ),
+            (
+                "hooks/cursor/rtk-rewrite.sh",
+                "/updated_input/command",
+                "/permission",
+            ),
+        ] {
+            let (code, stdout, stderr) =
+                bare.run_hook(hook, "git status", &[("RTK_REWRITE_HOST", "openclaw")]);
+            let reply: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+                panic!("{hook} gave no JSON ({e}), exit {code}: stdout {stdout:?}, stderr {stderr:?}")
+            });
+            assert_eq!(
+                reply.pointer(command_at).and_then(|v| v.as_str()),
+                Some("rtk git status"),
+                "{hook} did not hand back the rewrite at {command_at}: {reply}"
+            );
+            assert_ne!(
+                reply.pointer(permission_at).and_then(|v| v.as_str()),
+                Some("allow"),
+                "{hook} auto-allowed under an inherited host: {reply}"
+            );
+        }
+    }
 
     /// The default ask collapses to allow: that is the whole of what the host
     /// name buys, and the reason the plugin no longer prompts for a command no
@@ -586,7 +690,7 @@ mod rewrite_host_scoping {
     /// An explicit `ask` rule is the user's own instruction and is *not*
     /// relaxed: the host still gets exit 3 and can prompt. Relaxing it would
     /// discard a rule the user wrote while honouring the deny from the same
-    /// file (#3909 review, round 2).
+    /// file.
     #[test]
     fn openclaw_keeps_an_explicit_ask_rule() {
         let asked = Sandbox::with_rules(&[], &["git status"], &[]);
@@ -600,7 +704,7 @@ mod rewrite_host_scoping {
     /// The suite is hermetic against the variable: `run_with_env` scrubs it, so
     /// exporting `RTK_REWRITE_HOST=openclaw` in a developer's shell cannot turn
     /// `default_verdict_exits_three_never_zero` red on that machine and green
-    /// elsewhere (#3909 review, round 2). Without the scrub, the child inherits
+    /// elsewhere. Without the scrub, the child inherits
     /// the value and this call exits 0.
     #[test]
     fn an_exported_host_cannot_relax_a_caller_that_did_not_set_it() {

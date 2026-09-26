@@ -47,7 +47,7 @@ pub(crate) enum HookDecision {
 /// ships independently of the binary, so that skew is the normal case during
 /// an upgrade, not an edge one. An rtk that does not know this variable
 /// ignores it and keeps its current behaviour, which is the only arrangement
-/// where old and new cannot disagree about a deny (#3909 review, site 2).
+/// where old and new cannot disagree about a deny.
 /// `the_host_is_not_an_argv_token_so_versions_cannot_disagree` in
 /// `tests/hook_decision_protocol_test.rs` pins both halves.
 pub(crate) const REWRITE_HOST_ENV: &str = "RTK_REWRITE_HOST";
@@ -69,7 +69,7 @@ pub(crate) const REWRITE_HOST_ENV: &str = "RTK_REWRITE_HOST";
 /// [`PermissionVerdict::Ask`] is the user's own instruction and is left for the
 /// host to honour, and a [`HookDecision::Deny`] and a [`HookDecision::Defer`]
 /// are structurally out of reach — a host name cannot turn a denied command
-/// into an allowed rewrite, nor discard an explicit ask (#3909 review, round 2).
+/// into an allowed rewrite, nor discard an explicit ask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApprovalOwner {
     /// RTK's exit code is the permission decision. The default, and what every
@@ -88,8 +88,7 @@ impl ApprovalOwner {
     /// does not reach RTK through `rtk rewrite` at all, or no variable set
     /// gives [`ApprovalOwner::Rtk`] — the stricter behaviour, and today's. A
     /// typo must never borrow another host's rules or drop a gate, which is
-    /// what an unknown-value fallback to a *named* host would do (#3909
-    /// review, optional item 1).
+    /// what an unknown-value fallback to a *named* host would do.
     pub(crate) fn from_env() -> Self {
         match std::env::var(REWRITE_HOST_ENV) {
             Ok(name) => match AgentPath::lookup(&name) {
@@ -542,9 +541,9 @@ mod tests {
 
     /// The load-bearing property of [`ApprovalOwner`]: it relaxes the
     /// *default* ask and touches nothing else. A deny reaching `AllowRewrite`
-    /// here is the failure the #3909 review found, so it is asserted directly
+    /// would auto-apply a command the user forbade, so it is asserted directly
     /// rather than left to the exit-code layer. An explicit ask is a rule the
-    /// user wrote and must survive (#3909 review, round 2).
+    /// user wrote and must survive.
     #[test]
     fn a_delegate_owning_approval_relaxes_the_default_ask_only() {
         let rewritten = || "rtk git status".to_string();
@@ -607,7 +606,7 @@ mod tests {
 
     /// OpenClaw is the only agent that owns approval, and it is still judged
     /// against Claude Code's rules -- including their deny list, which is what
-    /// keeps an explicit deny enforced there (#3909 review, site 1).
+    /// keeps an explicit deny enforced there.
     #[test]
     fn openclaw_is_the_only_agent_that_owns_approval() {
         for name in AgentPath::AGENTS {

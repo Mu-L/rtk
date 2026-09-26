@@ -69,8 +69,8 @@ Without it, RTK evaluates every command against Claude Code's four settings file
 
 What does **not** change:
 
-- A command matching a `permissions.deny` rule in those Claude Code settings files is still refused, and the plugin blocks the tool call.
-- A command matching a `permissions.ask` rule **you wrote** still prompts: RTK returns exit 3 and the plugin raises its approval request. Only the *default* ask -- no rule matched -- is relaxed.
+- A command matching a `permissions.deny` rule in those Claude Code settings files is still refused, and the plugin blocks the tool call. As in Claude Code, a rule matches the command as written rather than every way of invoking the program — `Bash(git push *)` does not stop `git -C . push` — so a deny rule is not a security boundary.
+- A command matching a `permissions.ask` rule **you wrote** still prompts when RTK rewrites it: RTK returns exit 3 and the plugin raises its approval request. Only the *default* ask -- no rule matched -- is relaxed. A command RTK does not rewrite passes through to OpenClaw's own policy unchanged.
 - A command containing a command substitution (`` ` ``, `$(...)`) or a redirect to a file is never rewritten, on any host.
 
 What does change: the plugin no longer prompts for a command that matched no rule. Any approval prompt you still see comes from OpenClaw itself, or from an explicit `ask` rule.
@@ -90,7 +90,7 @@ prompt. Nothing else changes on upgrade.
 
 ### rtk version
 
-No minimum. `RTK_REWRITE_HOST` travels in the environment rather than in argv precisely so that an rtk which does not know it simply ignores it: you get the previous behaviour, a prompt on exit 3, rather than a gate that silently stops matching. `hooks/pi/README.md` documents the exit-3 convention for the delegates that do not own approval.
+No minimum. `RTK_REWRITE_HOST` travels in the environment rather than in argv precisely so that an rtk which does not know it simply ignores it: you get the previous behaviour, a prompt on exit 3, rather than a gate that silently stops matching. The exit-code table in `src/hooks/README.md` lists what each exit means for a delegate.
 
 ## What gets rewritten
 

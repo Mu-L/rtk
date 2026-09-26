@@ -426,7 +426,7 @@ echo ""
 # This hook turns exit 0 into an explicit allow, and RTK_REWRITE_HOST is the
 # channel that turns RTK's default ask into exit 0. An inherited value (a shell
 # rc, .envrc, or CI env) must therefore be scrubbed before the hook calls
-# `rtk rewrite` (#3909 review, round 2).
+# `rtk rewrite`.
 if command -v rtk &>/dev/null; then
   echo "--- Inherited host name (RTK_REWRITE_HOST) ---"
   HOST_TMP=$(mktemp -d)
