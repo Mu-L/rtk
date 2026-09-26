@@ -329,6 +329,86 @@ mod unix {
         );
     }
 
+    /// A `( … )` pair only wraps the whole command when it balances across it.
+    /// `( a ) b ( c )` closes its first group before the end, so peeling the
+    /// outer tokens would hand `b` an argument list it never had.
+    #[test]
+    fn a_group_that_closes_early_is_not_peeled() {
+        let output = rtk()
+            .args(["test", "(", "/bin/true", ")", "x", "(", "/bin/false", ")"])
+            .output()
+            .expect("run rtk test");
+
+        assert_eq!(output.status.code(), Some(127));
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("command not found"),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    /// `--shell` is RTK's flag on `rtk test`, and a flag other tools carry too.
+    /// The guard that answers a misused `rtk test --shell` must not read argv
+    /// belonging to a command RTK is only passing through.
+    #[test]
+    fn a_passthrough_keeps_its_own_shell_flag() {
+        let output = rtk()
+            .args(["/bin/echo", "--shell", "bash", "hi"])
+            .output()
+            .expect("run rtk passthrough");
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim_end(),
+            "--shell bash hi"
+        );
+    }
+
+    /// `metadata` answers EACCES rather than yes-or-no when a directory on the
+    /// way to the program is not searchable, so its existence is unknown from
+    /// there; 127 would assert that it is not there.
+    #[test]
+    fn an_unsearchable_parent_reports_exit_126() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let closed = dir.path().join("closed");
+        std::fs::create_dir(&closed).expect("create dir");
+        let program = closed.join("prog");
+        std::fs::write(&program, b"#!/bin/sh\nexit 0\n").expect("write program");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod program");
+        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o000))
+            .expect("close dir");
+
+        // Root ignores the search bit, so `metadata` answers there instead of
+        // failing and the premise does not hold. Leave rather than assert an
+        // outcome the environment cannot produce.
+        if std::fs::read_dir(&closed).is_ok() {
+            std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).ok();
+            return;
+        }
+
+        let output = rtk()
+            .arg("run")
+            .arg(&program)
+            .output()
+            .expect("run rtk run");
+
+        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).ok();
+
+        assert_eq!(output.status.code(), Some(126));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Permission denied"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn grouped_and_negated_commands_keep_their_exit_codes() {
         // `!` and `( … )` are `test`'s syntax as much as the shell's, and they
