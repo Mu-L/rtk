@@ -160,7 +160,7 @@ where
             // For stdout-only filters that inject JSON format, prefer the filter's summary
             // when raw stdout matches a known empty-run pattern (e.g., "[]", "{\"files\":[]}").
             let raw_trimmed = raw_for_tracking.trim();
-            let is_empty_json = opts.empty_json_patterns.iter().any(|p| raw_trimmed == *p);
+            let is_empty_json = opts.empty_json_patterns.contains(&raw_trimmed);
             if is_empty_json {
                 filtered.to_string()
             } else {
