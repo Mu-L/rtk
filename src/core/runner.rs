@@ -44,6 +44,10 @@ pub struct RunOptions<'a> {
     /// can read from a pipe (e.g. `cat file | rtk wc`); without it the child
     /// gets an empty stdin and reports zero.
     pub inherit_stdin: bool,
+    /// Patterns that the tool emits on a clean run when JSON output is injected.
+    /// When raw stdout matches one of these, the filter's summary is preferred
+    /// over the raw JSON by the never_worse guard.
+    pub empty_json_patterns: &'a [&'a str],
 }
 
 impl<'a> RunOptions<'a> {
@@ -78,6 +82,14 @@ impl<'a> RunOptions<'a> {
 
     pub fn inherit_stdin(mut self) -> Self {
         self.inherit_stdin = true;
+        self
+    }
+
+    /// Register empty JSON patterns that the tool emits on a clean run.
+    /// When raw stdout matches one of these, the filter's summary is preferred
+    /// over the raw JSON by the never_worse guard.
+    pub fn empty_json_patterns(mut self, patterns: &'a [&'a str]) -> Self {
+        self.empty_json_patterns = patterns;
         self
     }
 }
@@ -144,7 +156,19 @@ where
     let shown = if let Some(label) = opts.tee_label {
         print_with_hint(&filtered, raw, raw_for_tracking, label, exit_code)
     } else {
-        let guarded = crate::core::guard::never_worse(raw_for_tracking, &filtered).to_string();
+        let guarded = if opts.filter_stdout_only && !opts.empty_json_patterns.is_empty() {
+            // For stdout-only filters that inject JSON format, prefer the filter's summary
+            // when raw stdout matches a known empty-run pattern (e.g., "[]", "{\"files\":[]}").
+            let raw_trimmed = raw_for_tracking.trim();
+            let is_empty_json = opts.empty_json_patterns.iter().any(|p| raw_trimmed == *p);
+            if is_empty_json {
+                filtered.to_string()
+            } else {
+                crate::core::guard::never_worse(raw_for_tracking, &filtered).to_string()
+            }
+        } else {
+            crate::core::guard::never_worse(raw_for_tracking, &filtered).to_string()
+        };
         if opts.no_trailing_newline {
             print!("{}", guarded);
         } else {

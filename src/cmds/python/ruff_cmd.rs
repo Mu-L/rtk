@@ -111,7 +111,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
                 truncate(stdout.trim(), config::limits().passthrough_max_chars)
             }
         },
-        runner::RunOptions::stdout_only(),
+        runner::RunOptions::stdout_only().empty_json_patterns(&["[]"]),
     )
 }
 
