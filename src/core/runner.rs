@@ -44,10 +44,9 @@ pub struct RunOptions<'a> {
     /// can read from a pipe (e.g. `cat file | rtk wc`); without it the child
     /// gets an empty stdin and reports zero.
     pub inherit_stdin: bool,
-    /// Patterns that the tool emits on a clean run when JSON output is injected.
-    /// When raw stdout matches one of these, the filter's summary is preferred
-    /// over the raw JSON by the never_worse guard.
-    pub empty_json_patterns: &'a [&'a str],
+    /// What the tool prints on a clean run in the output format rtk injected, e.g. ruff's
+    /// `[]`. See [`guard_stdout`]. Not consulted when `tee_label` is set.
+    pub clean_outputs: &'a [&'a str],
 }
 
 impl<'a> RunOptions<'a> {
@@ -85,12 +84,21 @@ impl<'a> RunOptions<'a> {
         self
     }
 
-    /// Register empty JSON patterns that the tool emits on a clean run.
-    /// When raw stdout matches one of these, the filter's summary is preferred
-    /// over the raw JSON by the never_worse guard.
-    pub fn empty_json_patterns(mut self, patterns: &'a [&'a str]) -> Self {
-        self.empty_json_patterns = patterns;
+    pub fn clean_outputs(mut self, outputs: &'a [&'a str]) -> Self {
+        self.clean_outputs = outputs;
         self
+    }
+}
+
+/// The stdout to show: `filtered`, unless it costs more tokens than `raw`.
+///
+/// A `raw` that is exactly one of `clean_outputs` is the empty form of a format rtk injected,
+/// not output the user asked for, so the filter's summary is shown even though it is longer.
+fn guard_stdout<'a>(raw: &'a str, filtered: &'a str, clean_outputs: &[&str]) -> &'a str {
+    if clean_outputs.contains(&raw.trim()) {
+        filtered
+    } else {
+        crate::core::guard::never_worse(raw, filtered)
     }
 }
 
@@ -156,19 +164,7 @@ where
     let shown = if let Some(label) = opts.tee_label {
         print_with_hint(&filtered, raw, raw_for_tracking, label, exit_code)
     } else {
-        let guarded = if opts.filter_stdout_only && !opts.empty_json_patterns.is_empty() {
-            // For stdout-only filters that inject JSON format, prefer the filter's summary
-            // when raw stdout matches a known empty-run pattern (e.g., "[]", "{\"files\":[]}").
-            let raw_trimmed = raw_for_tracking.trim();
-            let is_empty_json = opts.empty_json_patterns.contains(&raw_trimmed);
-            if is_empty_json {
-                filtered.to_string()
-            } else {
-                crate::core::guard::never_worse(raw_for_tracking, &filtered).to_string()
-            }
-        } else {
-            crate::core::guard::never_worse(raw_for_tracking, &filtered).to_string()
-        };
+        let guarded = guard_stdout(raw_for_tracking, &filtered, opts.clean_outputs).to_string();
         if opts.no_trailing_newline {
             print!("{}", guarded);
         } else {
@@ -1012,6 +1008,26 @@ fn is_bun_count_line(trimmed: &str) -> bool {
         (Some(count), Some("pass" | "fail" | "skip" | "todo" | "error"), None)
             if count.chars().all(|c| c.is_ascii_digit())
     )
+}
+
+#[cfg(test)]
+mod guard_stdout_tests {
+    use super::*;
+
+    const SUMMARY: &str = "Ruff: No issues found";
+
+    #[test]
+    fn an_injected_clean_output_shows_the_summary() {
+        assert_eq!(guard_stdout("[]\n", SUMMARY, &["[]"]), SUMMARY);
+        assert_eq!(guard_stdout("[]\r\n", SUMMARY, &["[]"]), SUMMARY);
+    }
+
+    #[test]
+    fn any_other_short_output_still_goes_through_never_worse() {
+        assert_eq!(guard_stdout("{}\n", SUMMARY, &["[]"]), "{}\n");
+        assert_eq!(guard_stdout("[ ]\n", SUMMARY, &["[]"]), "[ ]\n");
+        assert_eq!(guard_stdout("[]\n", SUMMARY, &[]), "[]\n");
+    }
 }
 
 #[cfg(test)]
