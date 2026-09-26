@@ -496,9 +496,7 @@ fn show_recall_stats() -> Result<()> {
 
     if stats.is_empty() {
         println!("No recall activity recorded yet.");
-        println!(
-            "Stats appear once filters elide output (failures, trimmed lists) in sqlite or tee mode."
-        );
+        println!("Stats appear once filters elide output (failures, trimmed lists).");
         return Ok(());
     }
 
