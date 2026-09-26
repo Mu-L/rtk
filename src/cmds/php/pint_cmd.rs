@@ -69,7 +69,9 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         "pint",
         &args.join(" "),
         filter,
-        runner::RunOptions::stdout_only().tee("pint").empty_json_patterns(&[r#"{"files":[]}"#]),
+        runner::RunOptions::stdout_only()
+            .tee("pint")
+            .empty_json_patterns(&[r#"{"files":[]}"#]),
     )
 }
 
